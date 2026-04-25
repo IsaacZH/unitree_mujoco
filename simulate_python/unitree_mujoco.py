@@ -7,9 +7,11 @@ import threading
 import cv2
 import numpy as np
 
-from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher
+from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher, ChannelSubscriber
 from unitree_sdk2py_bridge import UnitreeSdk2Bridge, ElasticBand
 from depth_image_dds import DepthImage_, create_depth_message
+from nav_debug_dds import NavDebug_, decode_nav_debug_message
+from nav_target_dds import NavTarget_, decode_nav_target_message
 
 import config
 
@@ -193,6 +195,163 @@ class DepthVisualizer:
         return self.running
 
 
+class NavDebugVisualizer:
+    def __init__(self, mj_model, mj_data):
+        self.mj_model = mj_model
+        self.mj_data = mj_data
+        self.enabled = bool(config.ENABLE_NAV_DEBUG_VISUALIZATION)
+        self._lock = threading.Lock()
+        self._target_dir_b = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        self._target_speed_b = np.zeros(3, dtype=np.float32)
+        self._target_world = np.zeros(3, dtype=np.float32)
+        self._has_msg = False
+        self._has_target = False
+
+        self.base_body_id = mj_model.body(config.NAV_DEBUG_BASE_BODY).id
+        self._sub = None
+        self._target_sub = None
+        if self.enabled:
+            self._sub = ChannelSubscriber(config.NAV_DEBUG_TOPIC, NavDebug_)
+            self._sub.Init(self._on_message, 10)
+            self._target_sub = ChannelSubscriber(config.NAV_TARGET_TOPIC, NavTarget_)
+            self._target_sub.Init(self._on_target_message, 10)
+            print(f"Nav debug visualization subscribed: {config.NAV_DEBUG_TOPIC}")
+            print(f"Nav target visualization subscribed: {config.NAV_TARGET_TOPIC}")
+
+    def _on_message(self, msg: NavDebug_):
+        target_dir_b, target_speed_b = decode_nav_debug_message(msg)
+        with self._lock:
+            self._target_dir_b = target_dir_b.astype(np.float32)
+            self._target_speed_b = target_speed_b.astype(np.float32)
+            self._has_msg = True
+
+    def _on_target_message(self, msg: NavTarget_):
+        target_world = decode_nav_target_message(msg)
+        with self._lock:
+            self._target_world = target_world.astype(np.float32)
+            self._has_target = True
+
+    def _snapshot(self):
+        with self._lock:
+            return (
+                self._target_dir_b.copy(),
+                self._target_speed_b.copy(),
+                self._target_world.copy(),
+                self._has_msg,
+                self._has_target,
+            )
+
+    @staticmethod
+    def _normalize(v):
+        n = np.linalg.norm(v)
+        if n < 1e-6:
+            return None
+        return v / n
+
+    def _body_vec_to_world(self, vec_b):
+        out = np.zeros(3, dtype=np.float64)
+        quat = self.mj_data.xquat[self.base_body_id].astype(np.float64)
+        mujoco.mju_rotVecQuat(out, vec_b.astype(np.float64), quat)
+        return out.astype(np.float32)
+
+    @staticmethod
+    def _append_arrow(scene, start, end, radius, rgba):
+        if scene.ngeom >= scene.maxgeom:
+            return
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            geom,
+            mujoco.mjtGeom.mjGEOM_ARROW,
+            np.zeros(3),
+            np.zeros(3),
+            np.eye(3).flatten(),
+            np.asarray(rgba, dtype=np.float32),
+        )
+        mujoco.mjv_connector(
+            geom,
+            mujoco.mjtGeom.mjGEOM_ARROW,
+            float(radius),
+            np.asarray(start, dtype=np.float64),
+            np.asarray(end, dtype=np.float64),
+        )
+        geom.rgba[:] = np.asarray(rgba, dtype=np.float32)
+        scene.ngeom += 1
+
+    @staticmethod
+    def _append_box(scene, center, size, rgba):
+        if scene.ngeom >= scene.maxgeom:
+            return
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            geom,
+            mujoco.mjtGeom.mjGEOM_BOX,
+            np.asarray(size, dtype=np.float32),
+            np.asarray(center, dtype=np.float32),
+            np.eye(3).flatten(),
+            np.asarray(rgba, dtype=np.float32),
+        )
+        geom.rgba[:] = np.asarray(rgba, dtype=np.float32)
+        scene.ngeom += 1
+
+    def UpdateScene(self, scene):
+        if not self.enabled:
+            scene.ngeom = 0
+            return
+
+        scene.ngeom = 0
+        target_dir_b, target_speed_b, target_world, has_msg, has_target = self._snapshot()
+        if not has_msg and not has_target:
+            return
+
+        origin = self.mj_data.xpos[self.base_body_id].copy()
+        origin[2] += float(config.NAV_DEBUG_ARROW_Z_OFFSET)
+
+        # Goal direction arrow (fixed length)
+        dir_w = self._body_vec_to_world(target_dir_b)
+        dir_w = self._normalize(dir_w)
+        if dir_w is not None:
+            end = origin + dir_w * float(config.NAV_DEBUG_TARGET_ARROW_LENGTH)
+            self._append_arrow(
+                scene,
+                origin,
+                end,
+                config.NAV_DEBUG_TARGET_ARROW_RADIUS,
+                config.NAV_DEBUG_TARGET_ARROW_RGBA,
+            )
+
+        # Speed command arrow (length scales with speed magnitude in xy plane)
+        speed_b = target_speed_b.copy()
+        speed_b[2] = 0.0
+        speed_mag = float(np.linalg.norm(speed_b))
+        speed_dir_w = self._normalize(self._body_vec_to_world(speed_b))
+        if speed_dir_w is not None:
+            speed_len = np.clip(
+                speed_mag * float(config.NAV_DEBUG_SPEED_ARROW_SCALE),
+                float(config.NAV_DEBUG_SPEED_ARROW_MIN),
+                float(config.NAV_DEBUG_SPEED_ARROW_MAX),
+            )
+            end = origin + speed_dir_w * speed_len
+            self._append_arrow(
+                scene,
+                origin,
+                end,
+                config.NAV_DEBUG_SPEED_ARROW_RADIUS,
+                config.NAV_DEBUG_SPEED_ARROW_RGBA,
+            )
+
+        # Target world-position marker (yellow box)
+        if has_target:
+            marker_size = float(config.NAV_DEBUG_TARGET_BOX_SIZE)
+            center = target_world.copy()
+            center[2] += marker_size + float(config.NAV_DEBUG_TARGET_BOX_Z_LIFT)
+            self._append_box(
+                scene,
+                center,
+                np.array([marker_size, marker_size, marker_size], dtype=np.float32),
+                config.NAV_DEBUG_TARGET_BOX_RGBA,
+            )
+
+
 def SimulationThread():
     global mj_data, mj_model
     unitree = UnitreeSdk2Bridge(mj_model, mj_data)
@@ -229,6 +388,8 @@ def SimulationThread():
 def PhysicsViewerThread():
     while viewer.is_running():
         locker.acquire()
+        if nav_debug_visualizer is not None:
+            nav_debug_visualizer.UpdateScene(viewer.user_scn)
         viewer.sync()
         locker.release()
         time.sleep(config.VIEWER_DT)
@@ -239,6 +400,7 @@ if __name__ == "__main__":
 
     viewer_thread = Thread(target=PhysicsViewerThread)
     sim_thread = Thread(target=SimulationThread)
+    nav_debug_visualizer = None
 
     depth_visualizer = None
     try:
@@ -247,6 +409,11 @@ if __name__ == "__main__":
         )
     except Exception as exc:
         print(f"Depth visualization disabled: {exc}")
+
+    try:
+        nav_debug_visualizer = NavDebugVisualizer(mj_model, mj_data)
+    except Exception as exc:
+        print(f"Nav debug visualization disabled: {exc}")
 
     viewer_thread.start()
     sim_thread.start()

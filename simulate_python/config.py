@@ -21,5 +21,22 @@ DEPTH_DDS_WIDTH = 64 # Output depth width after downsampling and cropping
 DEPTH_DDS_HEIGHT = 40 # Output depth height after downsampling and cropping
 DEPTH_DDS_SCALE = 0.001 # Depth scale in meters per uint16 unit for DDS payload
 
+ENABLE_NAV_DEBUG_VISUALIZATION = True
+NAV_DEBUG_TOPIC = "rt/nav_debug"
+NAV_DEBUG_BASE_BODY = "base_link"
+NAV_DEBUG_ARROW_Z_OFFSET = 0.15
+NAV_DEBUG_TARGET_ARROW_LENGTH = 0.8
+NAV_DEBUG_SPEED_ARROW_SCALE = 0.6
+NAV_DEBUG_SPEED_ARROW_MIN = 0.2
+NAV_DEBUG_SPEED_ARROW_MAX = 1.5
+NAV_DEBUG_TARGET_ARROW_RADIUS = 0.02
+NAV_DEBUG_SPEED_ARROW_RADIUS = 0.025
+NAV_DEBUG_TARGET_ARROW_RGBA = (0.2, 0.6, 1.0, 1.0)
+NAV_DEBUG_SPEED_ARROW_RGBA = (0.2, 1.0, 0.2, 1.0)
+NAV_TARGET_TOPIC = "rt/nav_target"
+NAV_DEBUG_TARGET_BOX_SIZE = 0.08
+NAV_DEBUG_TARGET_BOX_Z_LIFT = 0.04
+NAV_DEBUG_TARGET_BOX_RGBA = (1.0, 1.0, 0.2, 1.0)
+
 SIMULATE_DT = 0.002  # Need to be larger than the runtime of viewer.sync()
 VIEWER_DT = 0.02  # 50 fps for viewer
