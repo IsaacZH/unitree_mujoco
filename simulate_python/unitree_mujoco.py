@@ -7,8 +7,9 @@ import threading
 import cv2
 import numpy as np
 
-from unitree_sdk2py.core.channel import ChannelFactoryInitialize
+from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelPublisher
 from unitree_sdk2py_bridge import UnitreeSdk2Bridge, ElasticBand
+from depth_image_dds import DepthImage_, create_depth_message
 
 import config
 
@@ -41,6 +42,32 @@ dim_motor_sensor_ = 3 * num_motor_
 time.sleep(0.2)
 
 
+def downsample_and_crop_depth(depth_image, intrinsics, factor, target_width, target_height):
+    fx, fy, cx, cy = intrinsics
+
+    ds = depth_image[::factor, ::factor]
+    fx_ds = fx / factor
+    fy_ds = fy / factor
+    cx_ds = cx / factor
+    cy_ds = cy / factor
+
+    h_ds, w_ds = ds.shape
+    if target_width > w_ds or target_height > h_ds:
+        raise ValueError(
+            f"Target size {target_width}x{target_height} is larger than downsampled image {w_ds}x{h_ds}"
+        )
+
+    x0 = (w_ds - target_width) // 2
+    y0 = (h_ds - target_height) // 2
+    x1 = x0 + target_width
+    y1 = y0 + target_height
+
+    cropped = ds[y0:y1, x0:x1]
+    cx_out = cx_ds - x0
+    cy_out = cy_ds - y0
+    return cropped, (fx_ds, fy_ds, cx_out, cy_out)
+
+
 class DepthVisualizer:
     def __init__(self, mj_model, mj_data, camera_name):
         self.mj_model = mj_model
@@ -59,14 +86,49 @@ class DepthVisualizer:
         self.running = True
         self.window_name = f"Depth View: {camera_name}"
         self.far_clip = float(mj_model.stat.extent * mj_model.vis.map.zfar)
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        fx, fy, principal_x_offset, principal_y_offset = [
+            float(value) for value in mj_model.cam_intrinsic[self.camera.id]
+        ]
+        # MuJoCo principalpixel is stored as an offset from image center.
+        cx = 0.5 * self.width + principal_x_offset
+        cy = 0.5 * self.height + principal_y_offset
+        self.camera_intrinsics = (fx, fy, cx, cy)
+        self.last_publish_time = 0.0
+
+        self.depth_publisher = ChannelPublisher("rt/depth_image", DepthImage_)
+        self.depth_publisher.Init()
+
+        if config.ENABLE_DEPTH_VISUALIZATION:
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
 
     def Close(self):
         if not self.running:
             return
 
         self.running = False
-        cv2.destroyWindow(self.window_name)
+        if config.ENABLE_DEPTH_VISUALIZATION:
+            cv2.destroyWindow(self.window_name)
+        if self.depth_publisher is not None:
+            self.depth_publisher.Close()
+
+    def _process_depth(self, depth_image):
+        cropped_depth, intrinsics_out = downsample_and_crop_depth(
+            depth_image,
+            self.camera_intrinsics,
+            factor=config.DEPTH_DDS_DOWNSAMPLE_FACTOR,
+            target_width=config.DEPTH_DDS_WIDTH,
+            target_height=config.DEPTH_DDS_HEIGHT,
+        )
+
+        processed_depth = np.asarray(cropped_depth, dtype=np.float32).copy()
+        invalid = (~np.isfinite(processed_depth)) | (processed_depth <= 0) | (
+            processed_depth >= self.far_clip - 1e-3
+        )
+        processed_depth[invalid] = 0.0
+
+        depth_units = np.round(processed_depth / config.DEPTH_DDS_SCALE)
+        depth_units = np.clip(depth_units, 0, np.iinfo(np.uint16).max).astype(np.uint16)
+        return processed_depth, depth_units, intrinsics_out
 
     def _normalize_depth(self, depth_image):
         depth = np.asarray(depth_image)
@@ -102,35 +164,37 @@ class DepthVisualizer:
             depth_image = self.renderer.render()
             self.renderer.disable_depth_rendering()
 
-        grayscale, info_text = self._normalize_depth(depth_image)
-        colorized = cv2.cvtColor(grayscale, cv2.COLOR_GRAY2BGR)
-        cv2.putText(
-            colorized,
-            info_text,
-            (10, 24),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            1,
-            cv2.LINE_AA,
-        )
-        cv2.imshow(self.window_name, colorized)
+        processed_depth, depth_units, intrinsics_out = self._process_depth(depth_image)
 
-        key = cv2.waitKey(1)
-        if key == 27:
-            self.Close()
-            return False
+        now = time.perf_counter()
+        if now - self.last_publish_time >= config.DEPTH_DDS_DT:
+            msg = create_depth_message(
+                depth_units,
+                depth_scale=config.DEPTH_DDS_SCALE,
+                intrinsics=intrinsics_out,
+                frame_id="depth_camera",
+            )
+            self.depth_publisher.Write(msg)
+            self.last_publish_time = now
 
-        if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
-            self.Close()
+        if config.ENABLE_DEPTH_VISUALIZATION:
+            grayscale, info_text = self._normalize_depth(processed_depth)
+            colorized = cv2.cvtColor(grayscale, cv2.COLOR_GRAY2BGR)
+            cv2.imshow(self.window_name, colorized)
+
+            key = cv2.waitKey(1)
+            if key == 27:
+                self.Close()
+                return False
+
+            if cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
+                self.Close()
 
         return self.running
 
 
 def SimulationThread():
     global mj_data, mj_model
-
-    ChannelFactoryInitialize(config.DOMAIN_ID, config.INTERFACE)
     unitree = UnitreeSdk2Bridge(mj_model, mj_data)
 
     if config.USE_JOYSTICK:
@@ -171,17 +235,18 @@ def PhysicsViewerThread():
 
 
 if __name__ == "__main__":
+    ChannelFactoryInitialize(config.DOMAIN_ID, config.INTERFACE)
+
     viewer_thread = Thread(target=PhysicsViewerThread)
     sim_thread = Thread(target=SimulationThread)
 
     depth_visualizer = None
-    if config.ENABLE_DEPTH_VISUALIZATION:
-        try:
-            depth_visualizer = DepthVisualizer(
-                mj_model, mj_data, config.DEPTH_CAMERA_NAME
-            )
-        except Exception as exc:
-            print(f"Depth visualization disabled: {exc}")
+    try:
+        depth_visualizer = DepthVisualizer(
+            mj_model, mj_data, config.DEPTH_CAMERA_NAME
+        )
+    except Exception as exc:
+        print(f"Depth visualization disabled: {exc}")
 
     viewer_thread.start()
     sim_thread.start()
@@ -190,7 +255,7 @@ if __name__ == "__main__":
         while viewer.is_running():
             if depth_visualizer is not None and depth_visualizer.running:
                 depth_visualizer.Update()
-                time.sleep(config.DEPTH_VISUALIZATION_DT)
+                time.sleep(min(config.DEPTH_VISUALIZATION_DT, config.DEPTH_DDS_DT))
             else:
                 time.sleep(config.VIEWER_DT)
     except KeyboardInterrupt:
