@@ -75,7 +75,7 @@
       <geom size="0.05 0.045" pos="0.285 0 0.01" type="cylinder" class="collision" />
       <geom size="0.047" pos="0.293 0 -0.06" class="collision" />
       <site name="imu" pos="-0.02557 0 0.04232" />
-      <camera name="base_camera" pos="0.32715 0 0.04297" xyaxes="0 -1 0 0 0 1"
+      <camera name="base_camera" pos="0.32715 0 0.09297" xyaxes="0 -1 0 0 0 1"
         resolution="640 480" sensorsize="640 480"
         focalpixel="391.9765 391.9765" principalpixel="0.7953 -1.4250"
         output="rgb depth" />

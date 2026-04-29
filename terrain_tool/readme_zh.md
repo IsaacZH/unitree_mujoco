@@ -5,24 +5,32 @@
 ```bash
 pip3 install noise opencv-python numpy 
 ```
-2. 打开 terrain_generator.py 修改开头的配置，这里以 Go2 机器人为例
-```python
-
-# 机器人目录
-ROBOT = "go2"
-
-# 输入的场景文件 
-INPUT_SCENE_PATH = "./scene.xml"
-
-# 输出的
-OUTPUT_SCENE_PATH = "../unitree_robots/" + ROBOT + "/scene_terrain.xml"
-```
-3. 运行
+2. 直接生成 Go2 默认迷宫地形：
 ```bash
 cd terrain_tool
-python3 ./terrain_generator.py
+python3 ./terrain_generator.py --robot go2 maze
 ```
-程序将输出地形场景文件到`/unitree_robots/go2/scene_terrain.xml`。接着可以修改仿真器的配置文件`simulate/config.yaml`，将场景改为刚刚生成的 `scene_terrain.xml`:
+该命令会生成：
+- `unitree_robots/go2/maze_hfield.png`（8-bit 灰度高程图）
+- `unitree_robots/go2/scene_terrain.xml`（已引用该高程图）
+
+3. 可选：调节迷宫复杂度
+```bash
+python3 ./terrain_generator.py --robot go2 maze \
+  --image-size 256 --cells-x 25 --cells-y 25 \
+  --corridor-dilate-px 1 --seed 42
+```
+
+4. 如果需要旧版混合障碍演示场景：
+```bash
+python3 ./terrain_generator.py --robot go2 demo
+```
+`demo` 模式包含 Perlin 高程图生成；如需使用请先安装可选依赖：
+```bash
+pip install noise
+```
+
+接着可以修改仿真器的配置文件`simulate/config.yaml`，将场景改为刚刚生成的 `scene_terrain.xml`:
 ```yaml
 robot_scene: "scene_terrain.xml"
 ```
@@ -33,7 +41,7 @@ ROBOT_SCENE = "../unitree_robots/" + ROBOT + "/scene_terrain.xml"
 之后运行 unitree_mujoco 仿真器，可以看到所生成的地形。
 
 # 函数解释
-用户可以利用 `terrain_generator.py` 自行添加所需的地形，以下是函数解释。
+用户也可以继续基于 `terrain_generator.py` 扩展地形，以下是函数解释。
 
 ##### 1. `AddBox`
 添加立方体，参数：
@@ -118,3 +126,5 @@ output_hfield_image="height_field.png", # 输出的高程图名称
 image_scale=[1.0, 1.0],  # 缩放图像比例
 invert_gray=False # 反转像素
 ```
+
+python3 terrain_generator.py --robot go2 maze --hfield-size-x 50 --hfield-size-y 50 --height-scale 0.8 --negative-height 0.1 --pos-x 0 --pos-y 0 --pos-z 0.0

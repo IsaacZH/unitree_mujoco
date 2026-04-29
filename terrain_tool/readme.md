@@ -18,6 +18,10 @@ OUTPUT_SCENE_PATH = "../unitree_robots/" + ROBOT + "/scene_terrain.xml"
 cd terrain_tool
 python3 ./terrain_generator.py
 ```
+If you want random boxes with guaranteed non-overlap, run:
+```bash
+python3 ./generate_random_boxes.py --count 120 --seed 24
+```
 The program will output the terrain scene file to `/unitree_robots/go2/scene_terrain.xml`. Then, you can modify the simulator configuration file `simulate/config.yaml` and set the scene to the newly generated `scene_terrain.xml`:
 ```yaml
 robot_scene: "scene_terrain.xml"
@@ -27,6 +31,43 @@ If you are using a Python-based simulator, modify `simulate_python/config.py`:
 ROBOT_SCENE = "../unitree_robots/" + ROBOT + "/scene_terrain.xml" 
 ```
 After that, run the unitree_mujoco simulator, and you can see the generated terrain.
+
+## Export Isaac Lab Height Array To MuJoCo Hfield
+
+If you already have a terrain height array exported from Isaac Lab (`.npy` or `.npz`),
+you can convert it directly to a MuJoCo-compatible 16-bit PNG and MJCF parameters:
+
+```bash
+cd terrain_tool
+python3 export_heightfield_from_array.py \
+	--input ./lab_height.npy \
+	--output-png ../unitree_robots/go2/lab_hfield_16u.png \
+	--output-meta ../unitree_robots/go2/lab_hfield_meta.json \
+	--cell-size 0.05 \
+	--negative-depth 0.0
+```
+
+The script will:
+- write a 16-bit height image (`--output-png`)
+- write metadata + recommended MJCF snippet (`--output-meta`)
+- print `<hfield>` and `<geom type="hfield">` XML snippet for direct copy
+
+For `.npz` input with multiple arrays, choose one key:
+
+```bash
+python3 export_heightfield_from_array.py \
+	--input ./lab_height.npz \
+	--npz-key heights \
+	--output-png ../unitree_robots/go2/lab_hfield_16u.png \
+	--output-meta ../unitree_robots/go2/lab_hfield_meta.json \
+	--cell-size 0.05
+```
+
+Tips:
+- keep 16-bit PNG to reduce stair-step artifacts
+- ensure `cell-size` matches your Lab terrain grid resolution (meters)
+- use `--flip-y` if the map appears mirrored in MuJoCo
+
 # Function Explanation
 Users can utilize `terrain_generator.py` to add the desired terrain. Below is an explanation of the functions.
 ##### 1. `AddBox`

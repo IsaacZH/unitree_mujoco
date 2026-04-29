@@ -1,0 +1,37 @@
+{
+  "input": "unitree_robots/go2/terrain_dump.npz",
+  "npz_meta_used": true,
+  "height_scale_used": 0.005,
+  "align_mode": "zero",
+  "shape": [
+    299,
+    299
+  ],
+  "z_min": -2.11,
+  "z_max": 2.24,
+  "z_span": 4.35,
+  "cell_size_x": 0.1,
+  "cell_size_y": 0.1,
+  "mujoco": {
+    "hfield_name": "lab_hfield",
+    "size": [
+      14.950000000000001,
+      14.950000000000001,
+      2.24,
+      2.11
+    ],
+    "geom_pos": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "geom_quat": [
+      1.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "asset_file_relative_hint": "../lab_hfield.png"
+  },
+  "mjcf_snippet": "<hfield name=\"lab_hfield\" size=\"14.950000 14.950000 2.240000 2.110000\" file=\"../lab_hfield.png\"/>\n<geom type=\"hfield\" hfield=\"lab_hfield\" pos=\"0 0 0.000000\" quat=\"1 0 0 0\"/>"
+}

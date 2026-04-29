@@ -10,7 +10,7 @@ JOYSTICK_DEVICE = 0 # Joystick number
 PRINT_SCENE_INFORMATION = True # Print link, joint and sensors information of robot
 ENABLE_ELASTIC_BAND = False # Virtual spring band, used for lifting h1
 
-ENABLE_DEPTH_VISUALIZATION = False # Show a live depth window for the configured camera
+ENABLE_DEPTH_VISUALIZATION = True # Show a live depth window for the configured camera
 DEPTH_CAMERA_NAME = "base_camera" # Camera used for depth visualization
 DEPTH_VISUALIZATION_DT = 0.1 # Refresh period of the depth window
 DEPTH_AUTO_RANGE = True # Auto-scale depth image using valid pixels in the current frame
